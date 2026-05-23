@@ -1,0 +1,15 @@
+{
+  "name": "curious",
+  "version": "0.1.0",
+  "description": "Pi extension: Augments the agent to be more curious and ask clarifying questions.",
+  "keywords": ["pi-package", "pi-extension", "curious", "clarification"],
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "pi": {
+    "extensions": ["./extensions"]
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.75.4"
+  }
+}
