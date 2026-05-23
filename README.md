@@ -15,8 +15,8 @@ Clone once, then `pi install` each subdir you want. Pi records the path in
 its settings without copying, so `git pull` updates take effect immediately.
 
 ```bash
-git clone git@github.com:anandyandawang/pi-extensions ~/code/pi-extensions
-cd ~/code/pi-extensions/<subdir>
+git clone git@github.com:anandyandawang/pi-extensions
+cd pi-extensions/<subdir>
 pnpm install
 # follow subdir-specific build/setup steps (see subdir README)
 pi install "$PWD"           # user-global  (~/.pi/agent/settings.json)
@@ -24,4 +24,4 @@ pi install "$PWD"           # user-global  (~/.pi/agent/settings.json)
 pi install "$PWD" -l        # project-local (.pi/settings.json in current cwd)
 ```
 
-Ad-hoc (no install, one-shot): `pi -e <subdir>/extensions/<file>.ts`.
+Ad-hoc (no install, one-shot): `pi -e ./extensions/<file>.ts`.

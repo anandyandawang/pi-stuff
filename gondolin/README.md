@@ -15,8 +15,8 @@ Adds these on top of the upstream `pi-gondolin.ts` example:
 ## Setup (one-time)
 
 ```bash
-git clone git@github.com:anandyandawang/pi-extensions ~/code/pi-extensions
-cd ~/code/pi-extensions/gondolin
+git clone git@github.com:anandyandawang/pi-extensions
+cd pi-extensions/gondolin
 pnpm install
 npx gondolin build --config build-config.json --output ./assets
 pi install "$PWD"            # user-global; pi records the path in settings
@@ -36,7 +36,7 @@ cd ~/my-project     # this dir becomes /workspace inside the VM
 pi                  # extension auto-loads via pi settings
 ```
 
-One-shot (no install): `pi -e ~/code/pi-extensions/gondolin/extensions/pi-gondolin.ts`.
+One-shot (no install, from this folder): `pi -e ./extensions/pi-gondolin.ts`.
 
 Host env vars consumed (all optional):
 
