@@ -125,6 +125,23 @@ async function configureGuestGit(
   vm: VM,
   ident: GitIdentity,
 ): Promise<void> {
+  // Host bind-mount preserves host uid on /workspace files; guest runs as
+  // root. Without this, every git command in /workspace fails with
+  // "detected dubious ownership". '*' is fine here because the VM is
+  // single-tenant and ephemeral.
+  const safe = await vm.exec([
+    "/usr/bin/git",
+    "config",
+    "--global",
+    "--add",
+    "safe.directory",
+    "*",
+  ]);
+  if (!safe.ok) {
+    throw new Error(
+      `git config safe.directory failed (${safe.exitCode}): ${safe.stderr}`,
+    );
+  }
   if (ident.name) {
     const r = await vm.exec([
       "/usr/bin/git",
@@ -179,14 +196,53 @@ async function verifyAllowlist(vm: VM): Promise<void> {
   }
 }
 
+// Host env keys that point at host paths or identities. Pi inherits these
+// from the user's shell and passes them through to BashOperations.exec; if
+// we don't strip them, guest bash sees HOME=/Users/... etc and breaks.
+const HOST_PATH_ENV_KEYS = new Set([
+  "HOME",
+  "USER",
+  "USERNAME",
+  "LOGNAME",
+  "SHELL",
+  "PWD",
+  "OLDPWD",
+  "TMPDIR",
+  "PATH",
+  "MANPATH",
+  "INFOPATH",
+  "XDG_DATA_HOME",
+  "XDG_CONFIG_HOME",
+  "XDG_CACHE_HOME",
+  "XDG_STATE_HOME",
+  "XDG_RUNTIME_DIR",
+  "HOMEBREW_PREFIX",
+  "HOMEBREW_CELLAR",
+  "HOMEBREW_REPOSITORY",
+  "JAVA_HOME",
+  "NODE_PATH",
+  "npm_config_prefix",
+]);
+
 function sanitizeEnv(
   env?: NodeJS.ProcessEnv,
 ): Record<string, string> | undefined {
-  if (!env) return undefined;
   const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(env)) {
-    if (typeof v === "string") out[k] = v;
+  if (env) {
+    for (const [k, v] of Object.entries(env)) {
+      if (typeof v !== "string") continue;
+      if (HOST_PATH_ENV_KEYS.has(k)) continue;
+      out[k] = v;
+    }
   }
+  // Force guest-valid defaults regardless of merge semantics with the
+  // baked-in VM env. Aligns with the Alpine + openjdk21 image.
+  out.HOME = "/root";
+  out.USER = "root";
+  out.LOGNAME = "root";
+  out.SHELL = "/bin/bash";
+  out.PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+  out.JAVA_HOME = "/usr/lib/jvm/default-jvm";
   return out;
 }
 
