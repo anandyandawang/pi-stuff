@@ -1,0 +1,15 @@
+{
+  "name": "grug",
+  "version": "0.1.0",
+  "description": "Pi extension: The Grug Brained Developer philosophy",
+  "keywords": ["pi-package", "pi-extension", "grug", "simplicity"],
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "pi": {
+    "extensions": ["./extensions"]
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.75.4"
+  }
+}
