@@ -187,6 +187,31 @@ async function configureGuestGit(
       `git config safe.directory failed (${safe.exitCode}): ${safe.stderr}`,
     );
   }
+
+  // Gondolin's createHttpHooks only proxies HTTP(S). Guest -> github.com
+  // over SSH (port 22) is blocked unless vm.enableSsh() is wired. Rewrite
+  // SSH-style github remotes to HTTPS so the existing token-swap proxy +
+  // credential.helper combo handles auth.
+  const sshRewrites: Array<[string, string]> = [
+    ["url.https://github.com/.insteadOf", "git@github.com:"],
+    ["url.https://github.com/.insteadOf", "ssh://git@github.com/"],
+  ];
+  for (const [key, value] of sshRewrites) {
+    const r = await vm.exec([
+      "/usr/bin/git",
+      "config",
+      "--global",
+      "--add",
+      key,
+      value,
+    ]);
+    if (!r.ok) {
+      throw new Error(
+        `git config ${key} failed (${r.exitCode}): ${r.stderr}`,
+      );
+    }
+  }
+
   if (ident.name) {
     const r = await vm.exec([
       "/usr/bin/git",
