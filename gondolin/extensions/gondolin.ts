@@ -35,6 +35,7 @@ import {
 
 import {
   createHttpHooks,
+  ReadonlyProvider,
   RealFSProvider,
   VM,
 } from "@earendil-works/gondolin";
@@ -493,8 +494,15 @@ export default function (pi: ExtensionAPI) {
         vfs: {
           mounts: {
             [GUEST_WORKSPACE]: new RealFSProvider(localCwd),
+            // /pi-runtime is wrapped in ReadonlyProvider so the guest
+            // can read pi's docs/examples but can't overwrite pi's
+            // install dir on the host.
             ...(PI_ROOT
-              ? { [GUEST_PI_RUNTIME]: new RealFSProvider(PI_ROOT) }
+              ? {
+                  [GUEST_PI_RUNTIME]: new ReadonlyProvider(
+                    new RealFSProvider(PI_ROOT),
+                  ),
+                }
               : {}),
           },
         },
