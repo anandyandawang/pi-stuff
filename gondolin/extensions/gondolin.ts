@@ -40,11 +40,42 @@ import {
 } from "@earendil-works/gondolin";
 
 const GUEST_WORKSPACE = "/workspace";
+const GUEST_PI_RUNTIME = "/pi-runtime";
 
 const EXT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(EXT_DIR, "..");
 const ASSETS_DIR = path.join(ROOT, "assets");
 const ALLOWED_HOSTS_PATH = path.join(ROOT, "allowed-hosts.json");
+
+// Pi's system prompt references pi-coding-agent's own docs/examples by
+// their HOST install path. Without a second mount the model gets
+// "path escapes workspace" for every doc lookup. Detect pi's package
+// root from process.argv[1] (pi's CLI entry script) and mount it at
+// /pi-runtime so the same host paths translate cleanly.
+function resolvePiRuntimeRoot(): string | undefined {
+  const entry = process.argv[1];
+  if (!entry) return undefined;
+  let dir = path.dirname(entry);
+  while (dir !== path.dirname(dir)) {
+    const pkgPath = path.join(dir, "package.json");
+    if (existsSync(pkgPath)) {
+      try {
+        const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as {
+          name?: string;
+        };
+        if (pkg.name === "@earendil-works/pi-coding-agent") {
+          return dir;
+        }
+      } catch {
+        // not a usable package.json, keep walking
+      }
+    }
+    dir = path.dirname(dir);
+  }
+  return undefined;
+}
+
+const PI_ROOT = resolvePiRuntimeRoot();
 
 interface AllowedHostsConfig {
   allowed: string[];
@@ -60,14 +91,26 @@ function shQuote(value: string): string {
   return "'" + value.replace(/'/g, "'\\''") + "'";
 }
 
-function toGuestPath(localCwd: string, localPath: string): string {
-  const rel = path.relative(localCwd, localPath);
-  if (rel === "") return GUEST_WORKSPACE;
-  if (rel.startsWith("..") || path.isAbsolute(rel)) {
-    throw new Error(`path escapes workspace: ${localPath}`);
-  }
+function tryTranslate(
+  hostRoot: string,
+  guestRoot: string,
+  localPath: string,
+): string | undefined {
+  const rel = path.relative(hostRoot, localPath);
+  if (rel === "") return guestRoot;
+  if (rel.startsWith("..") || path.isAbsolute(rel)) return undefined;
   const posixRel = rel.split(path.sep).join(path.posix.sep);
-  return path.posix.join(GUEST_WORKSPACE, posixRel);
+  return path.posix.join(guestRoot, posixRel);
+}
+
+function toGuestPath(localCwd: string, localPath: string): string {
+  const ws = tryTranslate(localCwd, GUEST_WORKSPACE, localPath);
+  if (ws !== undefined) return ws;
+  if (PI_ROOT) {
+    const pi = tryTranslate(PI_ROOT, GUEST_PI_RUNTIME, localPath);
+    if (pi !== undefined) return pi;
+  }
+  throw new Error(`path escapes workspace: ${localPath}`);
 }
 
 function loadAllowedHosts(): AllowedHostsConfig {
@@ -450,6 +493,9 @@ export default function (pi: ExtensionAPI) {
         vfs: {
           mounts: {
             [GUEST_WORKSPACE]: new RealFSProvider(localCwd),
+            ...(PI_ROOT
+              ? { [GUEST_PI_RUNTIME]: new RealFSProvider(PI_ROOT) }
+              : {}),
           },
         },
       });
