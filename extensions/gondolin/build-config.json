@@ -22,6 +22,8 @@
       "openjdk21",
       "gradle",
       "maven",
+      "nodejs",
+      "npm",
       "fzf",
       "jq",
       "vim",
