@@ -1,6 +1,6 @@
-onlyBuiltDependencies:
-  - "@google/genai"
-  - cpu-features
-  - koffi
-  - protobufjs
-  - ssh2
+allowBuilds:
+  "@google/genai": true
+  cpu-features: true
+  koffi: true
+  protobufjs: true
+  ssh2: true
