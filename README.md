@@ -11,11 +11,17 @@ pi-package; install separately.
 
 ## Install
 
-Each subdir has its own README with install steps. General pattern:
+Clone once, then `pi install` each subdir you want. Pi records the path in
+its settings without copying, so `git pull` updates take effect immediately.
 
 ```bash
-cd <subdir>
+git clone git@github.com:anandyandawang/pi-extensions ~/code/pi-extensions
+cd ~/code/pi-extensions/<subdir>
 pnpm install
-# follow subdir-specific build/setup steps
-ln -s "$PWD" ~/.pi/agent/git/<subdir-name>
+# follow subdir-specific build/setup steps (see subdir README)
+pi install "$PWD"           # user-global  (~/.pi/agent/settings.json)
+# or
+pi install "$PWD" -l        # project-local (.pi/settings.json in current cwd)
 ```
+
+Ad-hoc (no install, one-shot): `pi -e <subdir>/extensions/<file>.ts`.

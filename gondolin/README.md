@@ -19,8 +19,12 @@ git clone git@github.com:anandyandawang/pi-extensions ~/code/pi-extensions
 cd ~/code/pi-extensions/gondolin
 pnpm install
 npx gondolin build --config build-config.json --output ./assets
-ln -s ~/code/pi-extensions/gondolin ~/.pi/agent/git/gondolin
+pi install "$PWD"            # user-global; pi records the path in settings
+# or:  pi install "$PWD" -l  # project-local scope only
 ```
+
+`pi install <path>` adds the directory to pi's settings without copying.
+`git pull` updates propagate without reinstall. To remove: `pi remove "$PWD"`.
 
 Edit `build-config.json` to switch `arch` to `x86_64` if you're not on an
 ARM host. Image build takes a few minutes.
@@ -29,8 +33,10 @@ ARM host. Image build takes a few minutes.
 
 ```bash
 cd ~/my-project     # this dir becomes /workspace inside the VM
-pi                  # extension auto-loads via ~/.pi/agent/git/gondolin
+pi                  # extension auto-loads via pi settings
 ```
+
+One-shot (no install): `pi -e ~/code/pi-extensions/gondolin/extensions/pi-gondolin.ts`.
 
 Host env vars consumed (all optional):
 
