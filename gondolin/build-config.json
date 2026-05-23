@@ -18,6 +18,7 @@
       "openssh",
       "git",
       "git-lfs",
+      "github-cli",
       "openjdk21",
       "gradle",
       "maven",
