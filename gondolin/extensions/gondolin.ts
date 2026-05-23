@@ -262,6 +262,26 @@ async function configureGuestGit(
   }
 }
 
+// Bash commands aren't path-translated (only read/write/edit tool params
+// are). Pi's system prompt mentions pi's docs/examples at their HOST install
+// path, so the model often does `ls /Users/.../pi-coding-agent/docs` and
+// hits ENOENT. Symlink the host path to /pi-runtime inside the guest so
+// both shell access and tool access resolve.
+async function aliasPiRuntimePath(vm: VM): Promise<void> {
+  if (!PI_ROOT) return;
+  const parent = path.dirname(PI_ROOT);
+  const r = await vm.exec([
+    "/bin/sh",
+    "-lc",
+    `mkdir -p ${shQuote(parent)} && ln -sfn ${shQuote(GUEST_PI_RUNTIME)} ${shQuote(PI_ROOT)}`,
+  ]);
+  if (!r.ok) {
+    throw new Error(
+      `alias pi runtime symlink failed (${r.exitCode}): ${r.stderr}`,
+    );
+  }
+}
+
 async function verifyAllowlist(vm: VM): Promise<void> {
   const allowed = await vm.exec([
     "/bin/sh",
@@ -535,6 +555,7 @@ export default function (pi: ExtensionAPI) {
 
       try {
         await configureGuestGit(created, gitIdent, !!process.env.GITHUB_TOKEN);
+        await aliasPiRuntimePath(created);
         await verifyAllowlist(created);
       } catch (err) {
         await created.close().catch(() => {});
