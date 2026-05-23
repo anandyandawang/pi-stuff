@@ -12,5 +12,14 @@
   "dependencies": {
     "@earendil-works/gondolin": "^0.12.0",
     "@earendil-works/pi-coding-agent": "^0.75.4"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@google/genai",
+      "cpu-features",
+      "koffi",
+      "protobufjs",
+      "ssh2"
+    ]
   }
 }
