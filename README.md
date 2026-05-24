@@ -19,7 +19,7 @@ npx gondolin build --config build-config.json --output ./assets
 
 Installation complete. Now go to your project and run `pi`:
 ```bash
-cd .. # or project of choice
+cd ../.. # back to pi-stuff root, or your project of choice
 pi
 ```
 
