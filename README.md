@@ -9,7 +9,7 @@ git clone git@github.com:anandyandawang/pi-stuff
 pi install pi-stuff
 ```
 
-Build the **gondolin** VM image (required once):
+Build the **gondolin** VM image:
 ```bash
 cd extensions/gondolin
 npx gondolin build --config build-config.json --output ./assets
