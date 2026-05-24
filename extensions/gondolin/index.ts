@@ -129,18 +129,28 @@ interface ExtraMount {
 }
 let extraMounts: ExtraMount[] = [];
 
-function loadPiSettingsFiles(localCwd: string): unknown[] {
-  const files = [
-    process.env.HOME
-      ? path.join(process.env.HOME, ".pi", "agent", "settings.json")
-      : undefined,
-    path.join(localCwd, ".pi", "settings.json"),
-  ];
-  const out: unknown[] = [];
-  for (const f of files) {
-    if (!f || !existsSync(f)) continue;
+interface LoadedSettings {
+  baseDir: string;
+  raw: unknown;
+}
+
+// Pi resolves relative paths in settings files against the settings file's
+// own directory: ~/.pi/agent/settings.json -> baseDir is ~/.pi/agent.
+function loadPiSettingsFiles(localCwd: string): LoadedSettings[] {
+  const candidates: Array<{ baseDir: string; file: string }> = [];
+  if (process.env.HOME) {
+    const baseDir = path.join(process.env.HOME, ".pi", "agent");
+    candidates.push({ baseDir, file: path.join(baseDir, "settings.json") });
+  }
+  {
+    const baseDir = path.join(localCwd, ".pi");
+    candidates.push({ baseDir, file: path.join(baseDir, "settings.json") });
+  }
+  const out: LoadedSettings[] = [];
+  for (const c of candidates) {
+    if (!existsSync(c.file)) continue;
     try {
-      out.push(JSON.parse(readFileSync(f, "utf8")));
+      out.push({ baseDir: c.baseDir, raw: JSON.parse(readFileSync(c.file, "utf8")) });
     } catch {
       /* ignore malformed settings */
     }
@@ -148,38 +158,57 @@ function loadPiSettingsFiles(localCwd: string): unknown[] {
   return out;
 }
 
+// Strings that look like remote sources (npm:..., git:..., https://..., etc)
+// must NOT be treated as filesystem paths.
+function isLocalPathLike(value: string): boolean {
+  if (!value) return false;
+  if (value.startsWith("npm:")) return false;
+  if (value.startsWith("git:")) return false;
+  if (value.startsWith("git@")) return false;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) return false;
+  return true;
+}
+
 // Pi settings record local-path packages under `extensions`, `skills`,
 // `prompts`, `themes` (string[] of paths) and `packages` (strings or
-// objects). Walk both and emit each absolute path that exists on disk.
+// objects). Resolve relative paths against the settings file's dir, expand
+// leading `~`, and emit every existing absolute path.
 function collectInstalledLocalPaths(localCwd: string): string[] {
   const stringArrayKeys = ["extensions", "skills", "prompts", "themes"];
   const out = new Set<string>();
-  const tryAdd = (candidate: unknown) => {
+  const tryAdd = (candidate: unknown, baseDir: string) => {
     if (typeof candidate !== "string") return;
-    if (!path.isAbsolute(candidate)) return;
-    if (!existsSync(candidate)) return;
-    let real = candidate;
+    if (!isLocalPathLike(candidate)) return;
+    let resolved = candidate;
+    if (resolved.startsWith("~") && process.env.HOME) {
+      resolved = path.join(process.env.HOME, resolved.slice(1));
+    }
+    if (!path.isAbsolute(resolved)) {
+      resolved = path.resolve(baseDir, resolved);
+    }
+    if (!existsSync(resolved)) return;
+    let real = resolved;
     try {
-      real = realpathSync(candidate);
+      real = realpathSync(resolved);
     } catch {
       /* ignore */
     }
     out.add(real);
   };
-  for (const raw of loadPiSettingsFiles(localCwd)) {
+  for (const { baseDir, raw } of loadPiSettingsFiles(localCwd)) {
     if (!raw || typeof raw !== "object") continue;
     const settings = raw as Record<string, unknown>;
     for (const key of stringArrayKeys) {
       const arr = settings[key];
-      if (Array.isArray(arr)) for (const v of arr) tryAdd(v);
+      if (Array.isArray(arr)) for (const v of arr) tryAdd(v, baseDir);
     }
     const pkgs = settings.packages;
     if (Array.isArray(pkgs)) {
       for (const p of pkgs) {
-        if (typeof p === "string") tryAdd(p);
+        if (typeof p === "string") tryAdd(p, baseDir);
         else if (p && typeof p === "object") {
           const obj = p as Record<string, unknown>;
-          tryAdd(obj.source ?? obj.path ?? obj.location);
+          tryAdd(obj.source ?? obj.path ?? obj.location, baseDir);
         }
       }
     }
