@@ -1,38 +1,20 @@
 /**
- * Pi + Gondolin Sandbox Extension (customized)
+ * Pi + Gondolin Sandbox Extension
  *
- * Based on upstream `host/examples/pi-gondolin.ts` from earendil-works/gondolin.
- * Adds:
- *   - Custom guest image (sandbox.imagePath: ../assets)
- *   - Deny-by-default network allowlist via createHttpHooks
- *   - GITHUB_TOKEN secret injection (guest sees placeholder)
- *   - Host git identity + GITHUB_USERNAME + proxy imported into guest env
- *   - Allowlist verification probe at startup
+ * Pi-side wiring only. Each capability is owned by a sibling module:
  *
- * Workspace mount: the directory you start `pi` in is mounted read-write at
- * `/workspace` inside the VM (upstream behavior, unchanged).
+ *   mounts.ts          /workspace + pi-runtime + pi-installed mounts,
+ *                      host->guest path translation, safe.directory
+ *   github-auth.ts     GITHUB_TOKEN secret injection + git credential helper
+ *                      + SSH->HTTPS rewrites
+ *   git-identity.ts    host gitconfig user.name/user.email -> guest
+ *   network-policy.ts  allowed-hosts.json loader + verify probe
+ *   env-passthrough.ts env baking + per-bash-call env sanitization
+ *   ops.ts             read/write/edit/bash op factories
  */
 
-import { execSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { createRequire } from "node:module";
+import { existsSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-import type {
-  ExtensionAPI,
-  ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
-import {
-  type BashOperations,
-  createBashTool,
-  createEditTool,
-  createReadTool,
-  createWriteTool,
-  type EditOperations,
-  type ReadOperations,
-  type WriteOperations,
-} from "@earendil-works/pi-coding-agent";
 
 import {
   createHttpHooks,
@@ -40,630 +22,37 @@ import {
   RealFSProvider,
   VM,
 } from "@earendil-works/gondolin";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
+import {
+  createBashTool,
+  createEditTool,
+  createReadTool,
+  createWriteTool,
+} from "@earendil-works/pi-coding-agent";
 
-const GUEST_WORKSPACE = "/workspace";
-const GUEST_PI_RUNTIME = "/pi-runtime";
-const GUEST_PI_INSTALLED_PREFIX = "/pi-installed";
-
-// Package root: the .ts file lives at the package root since the
-// flatten refactor (no nested extensions/ subdir). assets/ and
-// allowed-hosts.json are siblings of this file.
-const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const ASSETS_DIR = path.join(ROOT, "assets");
-const ALLOWED_HOSTS_PATH = path.join(ROOT, "allowed-hosts.json");
-
-// Pi's system prompt references pi-coding-agent's own docs/examples by
-// their HOST install path. Without a second mount the model gets
-// "path escapes workspace" for every doc lookup. Try several starting
-// points and walk up until we find pi-coding-agent's package.json.
-function findPiPackageRoot(start: string): string | undefined {
-  let dir = path.dirname(start);
-  while (dir !== path.dirname(dir)) {
-    const pkgPath = path.join(dir, "package.json");
-    if (existsSync(pkgPath)) {
-      try {
-        const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as {
-          name?: string;
-        };
-        if (pkg.name === "@earendil-works/pi-coding-agent") {
-          return dir;
-        }
-      } catch {
-        // not a usable package.json, keep walking
-      }
-    }
-    dir = path.dirname(dir);
-  }
-  return undefined;
-}
-
-function resolvePiRuntimeRoot(): string | undefined {
-  const seen = new Set<string>();
-  const tryStart = (p: string | undefined): string | undefined => {
-    if (!p || seen.has(p)) return undefined;
-    seen.add(p);
-    return findPiPackageRoot(p);
-  };
-
-  // 1. process.argv[1] = `pi` entry script. With npm-style installs this
-  //    is usually a symlink (~/.../bin/pi -> ../lib/node_modules/.../cli.js);
-  //    realpathSync follows it so the walk reaches the real package dir.
-  const argv1 = process.argv[1];
-  if (argv1) {
-    let real: string | undefined;
-    try {
-      real = realpathSync(argv1);
-    } catch {
-      /* ignore */
-    }
-    const root = tryStart(real) ?? tryStart(argv1);
-    if (root) return root;
-  }
-
-  // 2. Module resolver fallback. May resolve to OUR vendored copy under
-  //    gondolin/node_modules; only return it if its path looks plausible
-  //    (not inside our extension folder).
-  try {
-    const requireFromHere = createRequire(import.meta.url);
-    const resolved = requireFromHere.resolve(
-      "@earendil-works/pi-coding-agent",
-    );
-    const root = tryStart(resolved);
-    if (root && !root.startsWith(ROOT)) return root;
-  } catch {
-    /* ignore */
-  }
-
-  return undefined;
-}
-
-// Extra host directories to expose inside the guest. Populated once at
-// session_start before VM.create. Each entry becomes (a) a Readonly VFS
-// mount at `guestPath` and (b) a symlink in the guest at `hostPath`
-// pointing to that mount, so both tool-path translation and bash commands
-// that use the host path resolve.
-interface ExtraMount {
-  hostPath: string;
-  guestPath: string;
-  label: string;
-}
-let extraMounts: ExtraMount[] = [];
-
-interface LoadedSettings {
-  baseDir: string;
-  raw: unknown;
-}
-
-// Pi resolves relative paths in settings files against the settings file's
-// own directory: ~/.pi/agent/settings.json -> baseDir is ~/.pi/agent.
-function loadPiSettingsFiles(localCwd: string): LoadedSettings[] {
-  const candidates: Array<{ baseDir: string; file: string }> = [];
-  if (process.env.HOME) {
-    const baseDir = path.join(process.env.HOME, ".pi", "agent");
-    candidates.push({ baseDir, file: path.join(baseDir, "settings.json") });
-  }
-  {
-    const baseDir = path.join(localCwd, ".pi");
-    candidates.push({ baseDir, file: path.join(baseDir, "settings.json") });
-  }
-  const out: LoadedSettings[] = [];
-  for (const c of candidates) {
-    if (!existsSync(c.file)) continue;
-    try {
-      out.push({ baseDir: c.baseDir, raw: JSON.parse(readFileSync(c.file, "utf8")) });
-    } catch {
-      /* ignore malformed settings */
-    }
-  }
-  return out;
-}
-
-// Strings that look like remote sources (npm:..., git:..., https://..., etc)
-// must NOT be treated as filesystem paths.
-function isLocalPathLike(value: string): boolean {
-  if (!value) return false;
-  if (value.startsWith("npm:")) return false;
-  if (value.startsWith("git:")) return false;
-  if (value.startsWith("git@")) return false;
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) return false;
-  return true;
-}
-
-// Pi settings record local-path packages under `extensions`, `skills`,
-// `prompts`, `themes` (string[] of paths) and `packages` (strings or
-// objects). Resolve relative paths against the settings file's dir, expand
-// leading `~`, and emit every existing absolute path.
-function collectInstalledLocalPaths(localCwd: string): string[] {
-  const stringArrayKeys = ["extensions", "skills", "prompts", "themes"];
-  const out = new Set<string>();
-  const tryAdd = (candidate: unknown, baseDir: string) => {
-    if (typeof candidate !== "string") return;
-    if (!isLocalPathLike(candidate)) return;
-    let resolved = candidate;
-    if (resolved.startsWith("~") && process.env.HOME) {
-      resolved = path.join(process.env.HOME, resolved.slice(1));
-    }
-    if (!path.isAbsolute(resolved)) {
-      resolved = path.resolve(baseDir, resolved);
-    }
-    if (!existsSync(resolved)) return;
-    let real = resolved;
-    try {
-      real = realpathSync(resolved);
-    } catch {
-      /* ignore */
-    }
-    out.add(real);
-  };
-  for (const { baseDir, raw } of loadPiSettingsFiles(localCwd)) {
-    if (!raw || typeof raw !== "object") continue;
-    const settings = raw as Record<string, unknown>;
-    for (const key of stringArrayKeys) {
-      const arr = settings[key];
-      if (Array.isArray(arr)) for (const v of arr) tryAdd(v, baseDir);
-    }
-    const pkgs = settings.packages;
-    if (Array.isArray(pkgs)) {
-      for (const p of pkgs) {
-        if (typeof p === "string") tryAdd(p, baseDir);
-        else if (p && typeof p === "object") {
-          const obj = p as Record<string, unknown>;
-          tryAdd(obj.source ?? obj.path ?? obj.location, baseDir);
-        }
-      }
-    }
-  }
-  return [...out];
-}
-
-function buildExtraMounts(localCwd: string): ExtraMount[] {
-  const mounts: ExtraMount[] = [];
-  const seen = new Set<string>();
-  let localCwdReal = localCwd;
-  try {
-    localCwdReal = realpathSync(localCwd);
-  } catch {
-    /* ignore */
-  }
-
-  const add = (
-    hostPath: string,
-    guestPath: string,
-    label: string,
-  ): void => {
-    let real = hostPath;
-    try {
-      real = realpathSync(hostPath);
-    } catch {
-      /* ignore */
-    }
-    if (real === localCwdReal) return; // already mounted as /workspace
-    if (seen.has(real)) return;
-    seen.add(real);
-    mounts.push({ hostPath: real, guestPath, label });
-  };
-
-  const piRoot = resolvePiRuntimeRoot();
-  if (piRoot) add(piRoot, GUEST_PI_RUNTIME, "pi-coding-agent");
-
-  let i = 0;
-  for (const p of collectInstalledLocalPaths(localCwd)) {
-    add(p, `${GUEST_PI_INSTALLED_PREFIX}/${i++}`, path.basename(p));
-  }
-
-  return mounts;
-}
-
-interface AllowedHostsConfig {
-  allowed: string[];
-  githubTokenHosts?: string[];
-}
-
-interface GitIdentity {
-  name?: string;
-  email?: string;
-}
-
-function shQuote(value: string): string {
-  return "'" + value.replace(/'/g, "'\\''") + "'";
-}
-
-function tryTranslate(
-  hostRoot: string,
-  guestRoot: string,
-  localPath: string,
-): string | undefined {
-  const rel = path.relative(hostRoot, localPath);
-  if (rel === "") return guestRoot;
-  if (rel.startsWith("..") || path.isAbsolute(rel)) return undefined;
-  const posixRel = rel.split(path.sep).join(path.posix.sep);
-  return path.posix.join(guestRoot, posixRel);
-}
-
-function toGuestPath(localCwd: string, localPath: string): string {
-  const ws = tryTranslate(localCwd, GUEST_WORKSPACE, localPath);
-  if (ws !== undefined) return ws;
-  for (const m of extraMounts) {
-    const t = tryTranslate(m.hostPath, m.guestPath, localPath);
-    if (t !== undefined) return t;
-  }
-  throw new Error(`path escapes workspace: ${localPath}`);
-}
-
-function loadAllowedHosts(): AllowedHostsConfig {
-  if (!existsSync(ALLOWED_HOSTS_PATH)) {
-    throw new Error(`allowed-hosts.json not found at ${ALLOWED_HOSTS_PATH}`);
-  }
-  const parsed = JSON.parse(
-    readFileSync(ALLOWED_HOSTS_PATH, "utf8"),
-  ) as AllowedHostsConfig;
-  if (!Array.isArray(parsed.allowed) || parsed.allowed.length === 0) {
-    throw new Error(`allowed-hosts.json: "allowed" must be a non-empty array`);
-  }
-  return parsed;
-}
-
-function readHostGitIdentity(): GitIdentity {
-  const get = (key: string): string | undefined => {
-    try {
-      const out = execSync(`git config --global --get ${key}`, {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-      }).trim();
-      return out || undefined;
-    } catch {
-      return undefined;
-    }
-  };
-  return { name: get("user.name"), email: get("user.email") };
-}
-
-function collectHostEnv(): Record<string, string> {
-  const out: Record<string, string> = {};
-  const pass = (key: string) => {
-    const v = process.env[key];
-    if (typeof v === "string" && v.length > 0) out[key] = v;
-  };
-  pass("GITHUB_USERNAME");
-  pass("HTTPS_PROXY");
-  pass("HTTP_PROXY");
-  pass("NO_PROXY");
-  return out;
-}
-
-function buildSecrets(
-  tokenHosts: string[] | undefined,
-): Record<string, { hosts: string[]; value: string }> | undefined {
-  const token = process.env.GITHUB_TOKEN;
-  if (!token || !tokenHosts || tokenHosts.length === 0) return undefined;
-  return {
-    GITHUB_TOKEN: { hosts: tokenHosts, value: token },
-  };
-}
-
-async function configureGuestGit(
-  vm: VM,
-  ident: GitIdentity,
-  hasGithubToken: boolean,
-): Promise<void> {
-  // Host bind-mount preserves host uid on /workspace files; guest runs as
-  // root. Without this, every git command in /workspace fails with
-  // "detected dubious ownership". '*' is fine here because the VM is
-  // single-tenant and ephemeral.
-  const safe = await vm.exec([
-    "/usr/bin/git",
-    "config",
-    "--global",
-    "--add",
-    "safe.directory",
-    "*",
-  ]);
-  if (!safe.ok) {
-    throw new Error(
-      `git config safe.directory failed (${safe.exitCode}): ${safe.stderr}`,
-    );
-  }
-
-  // Gondolin's createHttpHooks only proxies HTTP(S). Guest -> github.com
-  // over SSH (port 22) is blocked unless vm.enableSsh() is wired. Rewrite
-  // SSH-style github remotes to HTTPS so the existing token-swap proxy +
-  // credential.helper combo handles auth.
-  const sshRewrites: Array<[string, string]> = [
-    ["url.https://github.com/.insteadOf", "git@github.com:"],
-    ["url.https://github.com/.insteadOf", "ssh://git@github.com/"],
-  ];
-  for (const [key, value] of sshRewrites) {
-    const r = await vm.exec([
-      "/usr/bin/git",
-      "config",
-      "--global",
-      "--add",
-      key,
-      value,
-    ]);
-    if (!r.ok) {
-      throw new Error(
-        `git config ${key} failed (${r.exitCode}): ${r.stderr}`,
-      );
-    }
-  }
-
-  if (ident.name) {
-    const r = await vm.exec([
-      "/usr/bin/git",
-      "config",
-      "--global",
-      "user.name",
-      ident.name,
-    ]);
-    if (!r.ok) {
-      throw new Error(
-        `git config user.name failed (${r.exitCode}): ${r.stderr}`,
-      );
-    }
-  }
-  if (ident.email) {
-    const r = await vm.exec([
-      "/usr/bin/git",
-      "config",
-      "--global",
-      "user.email",
-      ident.email,
-    ]);
-    if (!r.ok) {
-      throw new Error(
-        `git config user.email failed (${r.exitCode}): ${r.stderr}`,
-      );
-    }
-  }
-  if (hasGithubToken) {
-    // Tell git to use $GITHUB_TOKEN for HTTPS auth against github.com.
-    // The token value visible inside the guest is the gondolin placeholder;
-    // gondolin's HTTP proxy swaps it for the real token on the wire for
-    // hosts listed in allowed-hosts.json -> githubTokenHosts.
-    const helper =
-      "!f() { echo username=x-access-token; echo password=$GITHUB_TOKEN; }; f";
-    const r = await vm.exec([
-      "/usr/bin/git",
-      "config",
-      "--global",
-      "credential.https://github.com.helper",
-      helper,
-    ]);
-    if (!r.ok) {
-      throw new Error(
-        `git config credential.helper failed (${r.exitCode}): ${r.stderr}`,
-      );
-    }
-  }
-}
-
-// Bash commands aren't path-translated (only read/write/edit tool params
-// are). Pi's system prompt mentions pi's docs/examples at their HOST install
-// path, so the model often does `ls /Users/.../pi-coding-agent/docs` and
-// hits ENOENT. Symlink the host path to /pi-runtime inside the guest so
-// both shell access and tool access resolve.
-async function aliasHostPaths(vm: VM): Promise<void> {
-  for (const m of extraMounts) {
-    const parent = path.dirname(m.hostPath);
-    const r = await vm.exec([
-      "/bin/sh",
-      "-lc",
-      `mkdir -p ${shQuote(parent)} && ln -sfn ${shQuote(m.guestPath)} ${shQuote(m.hostPath)}`,
-    ]);
-    if (!r.ok) {
-      throw new Error(
-        `alias ${m.label} symlink failed (${r.exitCode}): ${r.stderr}`,
-      );
-    }
-  }
-}
-
-async function verifyAllowlist(vm: VM): Promise<void> {
-  const allowed = await vm.exec([
-    "/bin/sh",
-    "-lc",
-    "curl -sS -o /dev/null -w '%{http_code}' --max-time 5 https://api.github.com/zen",
-  ]);
-  if (!allowed.ok || !allowed.stdout.trim().startsWith("2")) {
-    throw new Error(
-      `allowlist verify: api.github.com unreachable (exit ${allowed.exitCode}, body ${allowed.stdout.trim()}, err ${allowed.stderr.trim()})`,
-    );
-  }
-  const denied = await vm.exec([
-    "/bin/sh",
-    "-lc",
-    "curl -sS -o /dev/null -w '%{http_code}' --max-time 5 https://example.com/ || echo BLOCKED",
-  ]);
-  const body = denied.stdout.trim();
-  if (body.startsWith("2") || body.startsWith("3")) {
-    throw new Error(
-      `allowlist verify: example.com reachable (got ${body}) but should be blocked by network policy`,
-    );
-  }
-}
-
-// Host env keys that point at host paths/identities or carry real secrets.
-// Pi forwards its process env to BashOperations.exec; if we don't strip
-// these, guest bash sees HOME=/Users/... and the REAL GITHUB_TOKEN, which
-// would defeat gondolin's placeholder swap.
-const HOST_PATH_ENV_KEYS = new Set([
-  "HOME",
-  "USER",
-  "USERNAME",
-  "LOGNAME",
-  "SHELL",
-  "PWD",
-  "OLDPWD",
-  "TMPDIR",
-  "PATH",
-  "MANPATH",
-  "INFOPATH",
-  "XDG_DATA_HOME",
-  "XDG_CONFIG_HOME",
-  "XDG_CACHE_HOME",
-  "XDG_STATE_HOME",
-  "XDG_RUNTIME_DIR",
-  "HOMEBREW_PREFIX",
-  "HOMEBREW_CELLAR",
-  "HOMEBREW_REPOSITORY",
-  "JAVA_HOME",
-  "NODE_PATH",
-  "npm_config_prefix",
-  // Real secrets — must come from gondolin's createHttpHooks placeholder
-  // map (guestSecretsEnv below), not from the host shell.
-  "GITHUB_TOKEN",
-]);
-
-// Populated by ensureVm() after createHttpHooks. Contains the gondolin
-// placeholder env (e.g. {GITHUB_TOKEN: "<opaque-placeholder>"}). Overlaid
-// onto every per-call bash env so guest scripts always see a usable
-// reference; gondolin swaps it on the wire for allowed destinations.
-let guestSecretsEnv: Record<string, string> = {};
-
-function sanitizeEnv(env?: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  if (env) {
-    for (const [k, v] of Object.entries(env)) {
-      if (typeof v !== "string") continue;
-      if (HOST_PATH_ENV_KEYS.has(k)) continue;
-      out[k] = v;
-    }
-  }
-  // Force guest-valid defaults regardless of merge semantics with the
-  // baked-in VM env. Aligns with the Alpine + openjdk21 image.
-  out.HOME = "/root";
-  out.USER = "root";
-  out.LOGNAME = "root";
-  out.SHELL = "/bin/bash";
-  out.PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
-  out.JAVA_HOME = "/usr/lib/jvm/default-jvm";
-  // Overlay placeholder secrets so guest scripts see a usable token value.
-  for (const [k, v] of Object.entries(guestSecretsEnv)) {
-    out[k] = v;
-  }
-  return out;
-}
-
-function createGondolinReadOps(vm: VM, localCwd: string): ReadOperations {
-  return {
-    readFile: async (p) => {
-      const guestPath = toGuestPath(localCwd, p);
-      const r = await vm.exec(["/bin/cat", guestPath]);
-      if (!r.ok) {
-        throw new Error(`cat failed (${r.exitCode}): ${r.stderr}`);
-      }
-      return r.stdoutBuffer;
-    },
-    access: async (p) => {
-      const guestPath = toGuestPath(localCwd, p);
-      const r = await vm.exec([
-        "/bin/sh",
-        "-lc",
-        `test -r ${shQuote(guestPath)}`,
-      ]);
-      if (!r.ok) {
-        throw new Error(`not readable: ${p}`);
-      }
-    },
-    detectImageMimeType: async (p) => {
-      const guestPath = toGuestPath(localCwd, p);
-      try {
-        const r = await vm.exec([
-          "/bin/sh",
-          "-lc",
-          `file --mime-type -b ${shQuote(guestPath)}`,
-        ]);
-        if (!r.ok) return null;
-        const m = r.stdout.trim();
-        return ["image/jpeg", "image/png", "image/gif", "image/webp"].includes(
-          m,
-        )
-          ? m
-          : null;
-      } catch {
-        return null;
-      }
-    },
-  };
-}
-
-function createGondolinWriteOps(vm: VM, localCwd: string): WriteOperations {
-  return {
-    writeFile: async (p, content) => {
-      const guestPath = toGuestPath(localCwd, p);
-      const dir = path.posix.dirname(guestPath);
-      const b64 = Buffer.from(content, "utf8").toString("base64");
-      const script = [
-        `set -eu`,
-        `mkdir -p ${shQuote(dir)}`,
-        `echo ${shQuote(b64)} | base64 -d > ${shQuote(guestPath)}`,
-      ].join("\n");
-      const r = await vm.exec(["/bin/sh", "-lc", script]);
-      if (!r.ok) {
-        throw new Error(`write failed (${r.exitCode}): ${r.stderr}`);
-      }
-    },
-    mkdir: async (dir) => {
-      const guestDir = toGuestPath(localCwd, dir);
-      const r = await vm.exec(["/bin/mkdir", "-p", guestDir]);
-      if (!r.ok) {
-        throw new Error(`mkdir failed (${r.exitCode}): ${r.stderr}`);
-      }
-    },
-  };
-}
-
-function createGondolinEditOps(vm: VM, localCwd: string): EditOperations {
-  const r = createGondolinReadOps(vm, localCwd);
-  const w = createGondolinWriteOps(vm, localCwd);
-  return { readFile: r.readFile, access: r.access, writeFile: w.writeFile };
-}
-
-function createGondolinBashOps(vm: VM, localCwd: string): BashOperations {
-  return {
-    exec: async (command, cwd, { onData, signal, timeout, env }) => {
-      const guestCwd = toGuestPath(localCwd, cwd);
-
-      const ac = new AbortController();
-      const onAbort = () => ac.abort();
-      signal?.addEventListener("abort", onAbort, { once: true });
-
-      let timedOut = false;
-      const timer =
-        timeout && timeout > 0
-          ? setTimeout(() => {
-              timedOut = true;
-              ac.abort();
-            }, timeout * 1000)
-          : undefined;
-
-      try {
-        const proc = vm.exec(["/bin/bash", "-lc", command], {
-          cwd: guestCwd,
-          signal: ac.signal,
-          env: sanitizeEnv(env),
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-
-        for await (const chunk of proc.output()) {
-          onData(chunk.data);
-        }
-
-        const r = await proc;
-        return { exitCode: r.exitCode };
-      } catch (err) {
-        if (signal?.aborted) throw new Error("aborted");
-        if (timedOut) throw new Error(`timeout:${timeout}`);
-        throw err;
-      } finally {
-        if (timer) clearTimeout(timer);
-        signal?.removeEventListener("abort", onAbort);
-      }
-    },
-  };
-}
+import {
+  collectHostEnv,
+  setGuestSecretsEnv,
+} from "./env-passthrough.ts";
+import { applyGitIdentity, readHostGitIdentity } from "./git-identity.ts";
+import { buildSecrets, configureGitHubAuth } from "./github-auth.ts";
+import {
+  aliasHostPaths,
+  ASSETS_DIR,
+  configureSafeDirectory,
+  GUEST_WORKSPACE,
+  prepareExtraMounts,
+} from "./mounts.ts";
+import { loadAllowedHosts, verifyAllowlist } from "./network-policy.ts";
+import {
+  createGondolinBashOps,
+  createGondolinEditOps,
+  createGondolinReadOps,
+  createGondolinWriteOps,
+} from "./ops.ts";
 
 export default function (pi: ExtensionAPI) {
   const localCwd = process.cwd();
@@ -687,6 +76,7 @@ export default function (pi: ExtensionAPI) {
         );
       }
 
+      // 1. Read host-side inputs.
       const hostsConfig = loadAllowedHosts();
       const gitIdent = readHostGitIdentity();
       const hostEnv = collectHostEnv();
@@ -700,29 +90,27 @@ export default function (pi: ExtensionAPI) {
         ),
       );
 
+      // 2. Build httpHooks + secret placeholder env. Cache the placeholder
+      //    map so sanitizeEnv can overlay it on every per-call bash env.
       const { httpHooks, env: secretsEnv } = createHttpHooks({
         allowedHosts: hostsConfig.allowed,
         secrets,
       });
-      // Cache for sanitizeEnv() so every per-call bash env carries the
-      // placeholder; otherwise real host GITHUB_TOKEN would slip through
-      // pi's env forwarding (stripped above) and there'd be no replacement.
-      guestSecretsEnv = secretsEnv;
+      setGuestSecretsEnv(secretsEnv);
 
-      // Resolve every host dir we want exposed inside the guest:
-      // pi-coding-agent's install dir + every local-path package pi
-      // tracks in settings.json. Each gets a read-only VFS mount and a
-      // symlink at the host path inside the guest.
-      extraMounts = buildExtraMounts(localCwd);
+      // 3. Resolve extra host dirs to expose (pi-coding-agent install dir +
+      //    every local-path package pi tracks in settings.json).
+      const extras = prepareExtraMounts(localCwd);
       const vfsMounts: Record<string, RealFSProvider | ReadonlyProvider> = {
         [GUEST_WORKSPACE]: new RealFSProvider(localCwd),
       };
-      for (const m of extraMounts) {
+      for (const m of extras) {
         vfsMounts[m.guestPath] = new ReadonlyProvider(
           new RealFSProvider(m.hostPath),
         );
       }
 
+      // 4. Boot the VM.
       const created = await VM.create({
         sandbox: { imagePath: ASSETS_DIR },
         httpHooks,
@@ -730,8 +118,12 @@ export default function (pi: ExtensionAPI) {
         vfs: { mounts: vfsMounts },
       });
 
+      // 5. Guest setup steps (one capability per line). Each is idempotent
+      //    within a session; a single failure tears the VM back down.
       try {
-        await configureGuestGit(created, gitIdent, !!process.env.GITHUB_TOKEN);
+        await configureSafeDirectory(created);
+        await applyGitIdentity(created, gitIdent);
+        await configureGitHubAuth(created, !!process.env.GITHUB_TOKEN);
         await aliasHostPaths(created);
         await verifyAllowlist(created);
       } catch (err) {
