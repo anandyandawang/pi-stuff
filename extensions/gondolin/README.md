@@ -15,8 +15,8 @@ Adds these on top of the upstream `pi-gondolin.ts` example:
 ## Setup (one-time)
 
 ```bash
-git clone git@github.com:anandyandawang/pi-extensions
-cd pi-extensions/gondolin
+git clone git@github.com:anandyandawang/pi-stuff
+cd pi-stuff/gondolin
 pnpm install
 npx gondolin build --config build-config.json --output ./assets
 pi install "$PWD"            # user-global; pi records the path in settings

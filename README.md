@@ -1,4 +1,4 @@
-# pi-extensions
+# pi-stuff
 
 Personal collection of pi extensions. Each subdirectory is an independent
 pi-package; install separately.
@@ -15,8 +15,8 @@ Clone once, then `pi install` each subdir you want. Pi records the path in
 its settings without copying, so `git pull` updates take effect immediately.
 
 ```bash
-git clone git@github.com:anandyandawang/pi-extensions
-cd pi-extensions/<subdir>
+git clone git@github.com:anandyandawang/pi-stuff
+cd pi-stuff/<subdir>
 pnpm install
 # follow subdir-specific build/setup steps (see subdir README)
 pi install "$PWD"           # user-global  (~/.pi/agent/settings.json)
