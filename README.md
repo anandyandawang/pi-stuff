@@ -6,7 +6,9 @@ Collection of stuff for pi.
 
 ```bash
 git clone git@github.com:anandyandawang/pi-stuff
-pi install pi-stuff
+cd pi-stuff
+pnpm install        # installs deps for every extension in one shot
+pi install "$PWD"   # or `pi install pi-stuff` from the parent dir
 ```
 
 Build the **gondolin** VM image:

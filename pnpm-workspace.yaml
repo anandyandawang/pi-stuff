@@ -1,3 +1,6 @@
+packages:
+  - extensions/*
+
 allowBuilds:
   "@google/genai": true
   cpu-features: true
