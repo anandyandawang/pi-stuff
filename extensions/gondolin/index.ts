@@ -72,7 +72,7 @@ export default function (pi: ExtensionAPI) {
     vmStarting = (async () => {
       if (!existsSync(path.join(ASSETS_DIR, "manifest.json"))) {
         throw new Error(
-          `gondolin assets missing at ${ASSETS_DIR}. Run: node build-image.mjs (from extensions/gondolin/)`,
+          `gondolin assets missing at ${ASSETS_DIR}. Run: npx gondolin build --config build-config.json --output ./assets`,
         );
       }
 

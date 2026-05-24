@@ -14,7 +14,7 @@ pi install .
 Build the **gondolin** VM image:
 ```bash
 cd extensions/gondolin
-node build-image.mjs
+npx gondolin build --config build-config.json --output ./assets
 ```
 
 Installation complete. Now go to your project and run `pi`:

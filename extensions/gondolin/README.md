@@ -21,5 +21,5 @@ See [root README](../../README.md).
 
 If you change the config, rebuild the image:
 ```bash
-node build-image.mjs    # max(gondolin auto-size, 4 GB)
+npx gondolin build --config build-config.json --output ./assets
 ```
