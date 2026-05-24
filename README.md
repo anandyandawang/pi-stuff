@@ -1,27 +1,16 @@
 # pi-stuff
 
-Personal collection of pi extensions. Each subdirectory is an independent
-pi-package; install separately.
+Collection of stuff for pi.
 
-## Extensions
-
-| Folder | What it does |
-|---|---|
-| [gondolin/](./gondolin) | Sandbox pi tool calls inside a Gondolin micro-VM (JVM toolchain) |
-
-## Install
-
-Clone once, then `pi install` each subdir you want. Pi records the path in
-its settings without copying, so `git pull` updates take effect immediately.
+## Setup
 
 ```bash
 git clone git@github.com:anandyandawang/pi-stuff
-cd pi-stuff/<subdir>
-pnpm install
-# follow subdir-specific build/setup steps (see subdir README)
-pi install "$PWD"           # user-global  (~/.pi/agent/settings.json)
-# or
-pi install "$PWD" -l        # project-local (.pi/settings.json in current cwd)
+pi install pi-stuff
 ```
 
-Ad-hoc (no install, one-shot): `pi -e ./<file>.ts`.
+## Stuff
+
+- **gondolin**: Sandbox tool calls in a micro-VM (JVM toolchain).
+- **curious**: Makes pi ask more questions instead of guessing.
+- **grug**: Grug brain for pi.
