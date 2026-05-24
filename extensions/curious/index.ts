@@ -23,11 +23,11 @@ export default function (pi: ExtensionAPI) {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       // This triggers a blocking input dialog in the TUI
-      const answer = await ctx.ui.input("Question", params.question);
+      const answer = await ctx.ui.input(params.question);
       
       return {
-        content: [{ type: "text", text: answer || "(User provided no answer)" }],
-        details: { answer },
+        content: [{ type: "text", text: `Question: ${params.question}\nAnswer: ${answer || "(User provided no answer)"}` }],
+        details: { question: params.question, answer },
       };
     },
   });
