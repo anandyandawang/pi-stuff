@@ -35,9 +35,6 @@
       "file"
     ]
   },
-  "rootfs": {
-    "sizeMb": 4096
-  },
   "runtimeDefaults": {
     "rootfsMode": "cow"
   }
