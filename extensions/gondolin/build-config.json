@@ -2,6 +2,7 @@
   "arch": "aarch64",
   "distro": "alpine",
   "env": {
+    "HOME": "/home/agent",
     "JAVA_HOME": "/usr/lib/jvm/java-21-openjdk",
     "GRADLE_OPTS": "-Dorg.gradle.daemon=false"
   },
@@ -15,7 +16,6 @@
       "ca-certificates",
       "curl",
       "e2fsprogs",
-      "e2fsprogs-extra",
       "openssh",
       "git",
       "git-lfs",
@@ -35,6 +35,14 @@
       "grep",
       "file"
     ]
+  },
+  "postBuild": {
+    "commands": [
+      "mkdir -p /home/agent && chmod 755 /home/agent"
+    ]
+  },
+  "rootfs": {
+    "sizeMb": 4096
   },
   "runtimeDefaults": {
     "rootfsMode": "cow"
