@@ -73,7 +73,10 @@ export function sanitizeEnv(env?: NodeJS.ProcessEnv): Record<string, string> {
   }
   // Force guest-valid defaults regardless of merge semantics with the
   // baked-in VM env. Aligns with the Alpine + openjdk21 image.
-  out.HOME = "/root";
+  // gondolin's guest init mounts /root as tmpfs (~RAM-quartered), which
+  // overflows fast under gradle/maven/npm caches. /home is left on the
+  // rootfs ext4; /home/agent is created at image build time.
+  out.HOME = "/home/agent";
   out.USER = "root";
   out.LOGNAME = "root";
   out.SHELL = "/bin/bash";
