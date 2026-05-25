@@ -2,7 +2,7 @@
   "arch": "aarch64",
   "distro": "alpine",
   "env": {
-    "JAVA_HOME": "/usr/lib/jvm/default-jvm",
+    "JAVA_HOME": "/usr/lib/jvm/java-21-openjdk",
     "GRADLE_OPTS": "-Dorg.gradle.daemon=false"
   },
   "alpine": {
@@ -20,6 +20,7 @@
       "git-lfs",
       "github-cli",
       "openjdk21",
+      "openjdk17",
       "gradle",
       "maven",
       "nodejs",

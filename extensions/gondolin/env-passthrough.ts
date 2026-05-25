@@ -78,7 +78,7 @@ export function sanitizeEnv(env?: NodeJS.ProcessEnv): Record<string, string> {
   out.LOGNAME = "root";
   out.SHELL = "/bin/bash";
   out.PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
-  out.JAVA_HOME = "/usr/lib/jvm/default-jvm";
+  out.JAVA_HOME = "/usr/lib/jvm/java-21-openjdk";
   // Overlay placeholder secrets so guest scripts see a usable token value.
   for (const [k, v] of Object.entries(guestSecretsEnv)) {
     out[k] = v;
