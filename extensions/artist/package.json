@@ -1,0 +1,16 @@
+{
+  "name": "artist",
+  "version": "0.1.0",
+  "description": "Pi extension: Visual planning with Mermaid diagrams",
+  "keywords": ["pi-package", "pi-extension", "artist", "mermaid"],
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.75.4",
+    "beautiful-mermaid": "^1.1.0"
+  }
+}
