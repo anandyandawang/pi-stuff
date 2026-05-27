@@ -7,7 +7,7 @@
   "private": true,
   "type": "module",
   "pi": {
-    "extensions": ["./grug.ts"]
+    "extensions": ["./index.ts"]
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.75.4"
