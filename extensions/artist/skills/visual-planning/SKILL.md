@@ -36,3 +36,16 @@ Once all chunks are visually approved, summarize the full sequence and ask for a
 - No raw box-drawing characters (┌ ┐ └ ┘). Let the tool do the rendering.
 - Keep diagrams simple. If Mermaid too complex, idea too complex.
 - Focus on the *flow of data* and *ownership of behavior*.
+
+### Emphasize What Is ADDED / REMOVED
+- **Visually distinguish changes** from existing code so Grug can see the impact at a glance.
+- Mark **new** nodes with 🪨 (add): `A[🪨 NewThing]`
+- Mark **removed** nodes with 🔥 (burn): `B[🔥 OldThing]`
+- Existing, unchanged nodes stay plain.
+- In your explanation, explicitly say: *"🪨 ADDED: [X, Y, Z] | 🔥 REMOVED: [A, B] — everything else stays same."*
+
+### Prefer Portrait Over Landscape
+- **Avoid wide diagrams.** Mermaid rendered as ASCII art in a TUI gets ugly when too wide.
+- Prefer a **vertical flow** (top-to-bottom). Aim for a height-to-width ratio between **50/50 and 70/30**.
+- If a diagram starts getting wide, break it into multiple smaller diagrams (one per Visual Chunk).
+- Flowcharts with `graph TD` (top-down) are better than `graph LR` (left-right) for TUI rendering.
