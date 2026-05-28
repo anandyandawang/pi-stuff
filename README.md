@@ -29,6 +29,7 @@ pi
 - **gondolin**: Sandbox tool calls in a micro-VM (JVM toolchain).
 - **curious**: Makes pi ask more questions instead of guessing.
 - **grug**: Grug brain for pi.
+- **pr-reviewer**: Polls your open GitHub PRs and fans out reviews across N user-chosen models (one pi subagent per model).
 
 ### Skills
 - **web-search**: Let pi search the web via DuckDuckGo.
