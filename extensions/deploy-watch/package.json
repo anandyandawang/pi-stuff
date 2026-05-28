@@ -1,0 +1,15 @@
+{
+  "name": "deploy-watch",
+  "version": "0.1.0",
+  "description": "Pi extension: watch merged PRs through GitHub Actions deploy and gather Datadog signal via pup.",
+  "keywords": ["pi-package", "pi-extension", "deploy-watch", "github-actions", "datadog"],
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.75.4"
+  }
+}
