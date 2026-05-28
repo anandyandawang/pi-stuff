@@ -1,0 +1,15 @@
+{
+  "name": "tdd-goal",
+  "version": "0.1.0",
+  "description": "Pi extension: Two-phase TDD goal (design integration tests, then make them pass)",
+  "keywords": ["pi-package", "pi-extension", "tdd", "goal", "test-driven"],
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.75.4"
+  }
+}
